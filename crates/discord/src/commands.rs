@@ -8,13 +8,21 @@ use {
     serenity::all::{
         Command, CommandDataOption, CommandDataOptionValue, CommandInteraction, CommandOptionType,
         ComponentInteraction, Context, CreateCommand, CreateCommandOption,
-        CreateInteractionResponse, CreateInteractionResponseFollowup, EditInteractionResponse,
-        GuildId, Interaction, InteractionContext,
+        CreateInteractionResponse, CreateInteractionResponseFollowup,
+        CreateInteractionResponseMessage, EditInteractionResponse, GuildId, Interaction,
+        InteractionContext,
     },
     tracing::{debug, info, warn},
 };
 
-use crate::state::AccountStateMap;
+use crate::{
+    access::{self, AccessDenied},
+    config::DiscordAccountConfig,
+    state::AccountStateMap,
+};
+
+/// Ephemeral reply to an interaction refused by the DM access policy.
+const DM_ACCESS_DENIED_MSG: &str = "You are not allowed to use this bot in direct messages.";
 
 /// Whether an interaction was invoked in the bot's own one-to-one DM.
 ///
@@ -46,6 +54,39 @@ pub(crate) fn interaction_reply_target(
         message_id: None,
         thread_id: None,
     }
+}
+
+/// Decide whether an interaction may reach the gateway, and build its reply
+/// target.
+///
+/// An interaction in the bot's DM is forwarded as a direct chat, so it must
+/// first pass the same DM access check (`dm_policy` and the DM allowlist) that
+/// a direct message to the bot does; otherwise a user barred from messaging
+/// the bot could still run operator direct-chat commands through a slash
+/// command or a button. Interactions outside the bot's DM are not direct and
+/// keep their existing behaviour.
+pub(crate) fn authorize_interaction(
+    account_id: &str,
+    config: &DiscordAccountConfig,
+    channel_id: serenity::all::ChannelId,
+    guild_id: Option<GuildId>,
+    context: Option<InteractionContext>,
+    user_id: &str,
+    username: &str,
+) -> Result<moltis_channels::plugin::ChannelReplyTarget, AccessDenied> {
+    if is_bot_dm_interaction(guild_id, context) {
+        access::check_access(
+            config,
+            &moltis_common::types::ChatType::Dm,
+            user_id,
+            Some(username),
+            None,
+            false,
+        )?;
+    }
+    Ok(interaction_reply_target(
+        account_id, channel_id, guild_id, context,
+    ))
 }
 
 /// Build the set of global slash commands to register.
@@ -120,6 +161,42 @@ async fn handle_slash_command(
         "Discord slash command received"
     );
 
+    let sender_id = command.user.id.to_string();
+    let state = {
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+        accts
+            .get(account_id)
+            .map(|s| (s.config.clone(), s.event_sink.clone()))
+    };
+
+    // Check DM access before acknowledging, so a refused command never reaches
+    // the gateway and the refusal is the interaction's only response.
+    let reply_to = match state.as_ref().map(|(config, _)| {
+        authorize_interaction(
+            account_id,
+            config,
+            command.channel_id,
+            command.guild_id,
+            command.context,
+            &sender_id,
+            &command.user.name,
+        )
+    }) {
+        Some(Ok(reply_to)) => Some(reply_to),
+        Some(Err(reason)) => {
+            info!(
+                account_id,
+                command = %command.data.name,
+                user_id = %sender_id,
+                %reason,
+                "Discord slash command refused by DM access policy"
+            );
+            refuse_interaction(command.create_response(ctx, refusal_response())).await;
+            return;
+        },
+        None => None,
+    };
+
     if let Err(e) = command.defer_ephemeral(ctx).await {
         warn!(
             command = %command.data.name,
@@ -128,23 +205,10 @@ async fn handle_slash_command(
         return;
     }
 
-    let event_sink = {
-        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
-        accts.get(account_id).and_then(|s| s.event_sink.clone())
-    };
-
-    let Some(sink) = event_sink else {
+    let (Some(reply_to), Some(sink)) = (reply_to, state.and_then(|(_, sink)| sink)) else {
         respond_ephemeral(ctx, command, "Bot is not ready yet.").await;
         return;
     };
-
-    let reply_to = interaction_reply_target(
-        account_id,
-        command.channel_id,
-        command.guild_id,
-        command.context,
-    );
-    let sender_id = command.user.id.to_string();
 
     let command_text = build_command_text(&command.data.name, &command.data.options);
 
@@ -175,6 +239,42 @@ async fn handle_component_interaction(
         "Discord component interaction received"
     );
 
+    let sender_id = component.user.id.to_string();
+    let state = {
+        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+        accts
+            .get(account_id)
+            .map(|s| (s.config.clone(), s.event_sink.clone()))
+    };
+    let Some((config, event_sink)) = state else {
+        return;
+    };
+
+    // Check DM access before acknowledging, so a refused interaction never
+    // reaches the gateway and the refusal is its only response.
+    let reply_to = match authorize_interaction(
+        account_id,
+        &config,
+        component.channel_id,
+        component.guild_id,
+        component.context,
+        &sender_id,
+        &component.user.name,
+    ) {
+        Ok(reply_to) => reply_to,
+        Err(reason) => {
+            info!(
+                account_id,
+                callback_data,
+                user_id = %sender_id,
+                %reason,
+                "Discord component interaction refused by DM access policy"
+            );
+            refuse_interaction(component.create_response(ctx, refusal_response())).await;
+            return;
+        },
+    };
+
     // Acknowledge the interaction immediately so Discord doesn't show a failure.
     if let Err(e) = component
         .create_response(ctx, CreateInteractionResponse::Acknowledge)
@@ -187,23 +287,10 @@ async fn handle_component_interaction(
         return;
     }
 
-    let event_sink = {
-        let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
-        accts.get(account_id).and_then(|s| s.event_sink.clone())
-    };
-
     let Some(sink) = event_sink else {
         return;
     };
 
-    let reply_to = interaction_reply_target(
-        account_id,
-        component.channel_id,
-        component.guild_id,
-        component.context,
-    );
-
-    let sender_id = component.user.id.to_string();
     match sink
         .dispatch_interaction(callback_data, reply_to, Some(&sender_id))
         .await
@@ -234,6 +321,22 @@ fn build_command_text(name: &str, options: &[CommandDataOption]) -> String {
     match arg {
         Some(value) if !value.is_empty() => format!("{name} {value}"),
         _ => name.to_string(),
+    }
+}
+
+/// Ephemeral refusal for an interaction denied by the DM access policy.
+fn refusal_response() -> CreateInteractionResponse {
+    CreateInteractionResponse::Message(
+        CreateInteractionResponseMessage::new()
+            .content(DM_ACCESS_DENIED_MSG)
+            .ephemeral(true),
+    )
+}
+
+/// Send a refusal, logging (not propagating) a failure to deliver it.
+async fn refuse_interaction(send: impl Future<Output = serenity::Result<()>>) {
+    if let Err(e) = send.await {
+        warn!("Failed to send DM access refusal: {e}");
     }
 }
 
@@ -301,6 +404,118 @@ mod tests {
                 "guild={guild_id:?} context={context:?} was forwarded as direct"
             );
             assert!(target.is_shared_chat());
+        }
+    }
+
+    const OPERATOR_ID: &str = "400347514466992128";
+    const STRANGER_ID: &str = "999999999";
+
+    fn dm_config(policy: moltis_channels::gating::DmPolicy) -> DiscordAccountConfig {
+        DiscordAccountConfig {
+            dm_policy: policy,
+            allowlist: vec![OPERATOR_ID.into()],
+            ..DiscordAccountConfig::default()
+        }
+    }
+
+    /// Authorize an interaction the way both the slash-command and the
+    /// component handler do.
+    fn authorize(
+        config: &DiscordAccountConfig,
+        guild_id: Option<GuildId>,
+        context: Option<InteractionContext>,
+        user_id: &str,
+    ) -> Result<moltis_channels::plugin::ChannelReplyTarget, AccessDenied> {
+        authorize_interaction(
+            "bot",
+            config,
+            serenity::all::ChannelId::new(42),
+            guild_id,
+            context,
+            user_id,
+            "someone",
+        )
+    }
+
+    #[test]
+    fn bot_dm_interaction_is_refused_when_dms_are_disabled() {
+        let config = dm_config(moltis_channels::gating::DmPolicy::Disabled);
+        // Even a user on the allowlist (e.g. an operator) is refused.
+        for user in [OPERATOR_ID, STRANGER_ID] {
+            assert_eq!(
+                authorize(&config, None, Some(InteractionContext::BotDm), user).err(),
+                Some(AccessDenied::DmsDisabled),
+            );
+        }
+    }
+
+    #[test]
+    fn bot_dm_interaction_is_refused_for_user_off_the_allowlist() {
+        let config = dm_config(moltis_channels::gating::DmPolicy::Allowlist);
+        assert_eq!(
+            authorize(&config, None, Some(InteractionContext::BotDm), STRANGER_ID).err(),
+            Some(AccessDenied::NotOnAllowlist),
+        );
+
+        let empty = DiscordAccountConfig {
+            allowlist: Vec::new(),
+            ..config
+        };
+        assert_eq!(
+            authorize(&empty, None, Some(InteractionContext::BotDm), OPERATOR_ID).err(),
+            Some(AccessDenied::NotOnAllowlist),
+        );
+    }
+
+    #[test]
+    fn bot_dm_interaction_matches_allowlist_by_username() {
+        let config = DiscordAccountConfig {
+            allowlist: vec!["someone".into()],
+            ..dm_config(moltis_channels::gating::DmPolicy::Allowlist)
+        };
+        let target = authorize(&config, None, Some(InteractionContext::BotDm), STRANGER_ID)
+            .expect("allowlisted username is allowed");
+        assert!(target.direct_chat);
+    }
+
+    #[test]
+    fn allowed_bot_dm_interaction_is_direct() {
+        for policy in [
+            moltis_channels::gating::DmPolicy::Allowlist,
+            moltis_channels::gating::DmPolicy::Open,
+        ] {
+            let config = dm_config(policy.clone());
+            let target = authorize(&config, None, Some(InteractionContext::BotDm), OPERATOR_ID)
+                .unwrap_or_else(|e| panic!("{policy:?}: allowed operator refused: {e}"));
+            assert!(target.direct_chat, "{policy:?}");
+            assert!(!target.is_shared_chat(), "{policy:?}");
+        }
+    }
+
+    #[test]
+    fn dm_policy_does_not_change_interactions_outside_the_bot_dm() {
+        let guild = Some(GuildId::new(9));
+        for policy in [
+            moltis_channels::gating::DmPolicy::Disabled,
+            moltis_channels::gating::DmPolicy::Allowlist,
+        ] {
+            let config = dm_config(policy.clone());
+            for (guild_id, context) in [
+                (guild, Some(InteractionContext::Guild)),
+                (guild, Some(InteractionContext::BotDm)),
+                (None, Some(InteractionContext::PrivateChannel)),
+                (None, None),
+            ] {
+                let target =
+                    authorize(&config, guild_id, context, STRANGER_ID).unwrap_or_else(|e| {
+                        panic!("{policy:?} guild={guild_id:?} context={context:?}: {e}")
+                    });
+                assert!(
+                    !target.direct_chat,
+                    "{policy:?} guild={guild_id:?} context={context:?} was forwarded as direct"
+                );
+                assert!(target.is_shared_chat());
+            }
         }
     }
 

@@ -126,7 +126,9 @@ Discord uses the same gating system as Telegram and Microsoft Teams:
 
 ### DM Policy
 
-Controls who can send direct messages to the bot.
+Controls who can send direct messages to the bot. It also applies to slash
+commands and button clicks in the bot's DM: a user the policy refuses gets an
+ephemeral refusal, and the interaction never reaches the gateway.
 
 | Value | Behavior |
 |-------|----------|
@@ -217,7 +219,8 @@ the bot is present). Responses are ephemeral — only visible to the user who
 invoked the command.
 
 Commands that require an operator direct chat, including `/context`,
-`/sessions`, and `/agent`, work for operators in a DM with the bot. In guild
+`/sessions`, and `/agent`, work for operators in a DM with the bot, provided the
+DM policy lets them message it. In guild
 channels they are denied, and so are slash commands invoked through a
 user-installed app outside the bot's own DM. Use the authenticated web UI for
 those commands from a guild.
