@@ -29,6 +29,7 @@ fn channel_event_serialization() {
 #[test]
 fn channel_session_key_format() {
     let target = ChannelReplyTarget {
+        direct_chat: false,
         ack_message_id: None,
         channel_type: ChannelType::Telegram,
         account_id: "bot1".into(),
@@ -42,6 +43,7 @@ fn channel_session_key_format() {
 #[test]
 fn channel_session_key_group() {
     let target = ChannelReplyTarget {
+        direct_chat: false,
         ack_message_id: None,
         channel_type: ChannelType::Telegram,
         account_id: "bot1".into(),
@@ -58,6 +60,7 @@ fn channel_session_key_group() {
 #[test]
 fn channel_session_key_forum_topic() {
     let target = ChannelReplyTarget {
+        direct_chat: false,
         ack_message_id: None,
         channel_type: ChannelType::Telegram,
         account_id: "bot1".into(),
@@ -163,6 +166,7 @@ fn explicit_shell_command_ignores_ordinary_chat() {
 #[test]
 fn unknown_and_group_chat_types_are_shared() {
     let discord = ChannelReplyTarget {
+        direct_chat: false,
         channel_type: ChannelType::Discord,
         account_id: "bot".into(),
         chat_id: "123".into(),
@@ -182,6 +186,7 @@ fn unknown_and_group_chat_types_are_shared() {
 #[test]
 fn proven_direct_chat_is_not_shared() {
     let target = ChannelReplyTarget {
+        direct_chat: false,
         channel_type: ChannelType::Telegram,
         account_id: "bot".into(),
         chat_id: "123".into(),
@@ -193,8 +198,63 @@ fn proven_direct_chat_is_not_shared() {
 }
 
 #[test]
+fn discord_dm_forwarded_by_adapter_is_direct_and_guild_stays_shared() {
+    let dm = ChannelReplyTarget {
+        direct_chat: true,
+        channel_type: ChannelType::Discord,
+        account_id: "bot".into(),
+        chat_id: "123".into(),
+        message_id: None,
+        thread_id: None,
+        ack_message_id: None,
+    };
+    let guild = ChannelReplyTarget {
+        direct_chat: false,
+        ..dm.clone()
+    };
+
+    assert!(!is_shared_channel_target(&dm));
+    assert!(is_shared_channel_target(&guild));
+    assert!(is_trusted_channel_turn(ChannelSenderRole::Operator, &dm));
+    assert!(!is_trusted_channel_turn(ChannelSenderRole::Guest, &dm));
+    assert!(!is_trusted_channel_turn(
+        ChannelSenderRole::Operator,
+        &guild
+    ));
+    assert!(is_channel_command_authorized(
+        moltis_channels::commands::CommandPrivilege::OperatorDirect,
+        ChannelSenderRole::Operator,
+        &dm
+    ));
+    assert!(!is_channel_command_authorized(
+        moltis_channels::commands::CommandPrivilege::OperatorDirect,
+        ChannelSenderRole::Operator,
+        &guild
+    ));
+}
+
+#[test]
+fn direct_chat_hint_cannot_make_an_id_classified_group_direct() {
+    let telegram_group = ChannelReplyTarget {
+        direct_chat: true,
+        channel_type: ChannelType::Telegram,
+        account_id: "bot".into(),
+        chat_id: "-123".into(),
+        message_id: None,
+        thread_id: None,
+        ack_message_id: None,
+    };
+    assert!(is_shared_channel_target(&telegram_group));
+    assert!(!is_trusted_channel_turn(
+        ChannelSenderRole::Operator,
+        &telegram_group
+    ));
+}
+
+#[test]
 fn only_operator_direct_turns_are_trusted() {
     let direct = ChannelReplyTarget {
+        direct_chat: false,
         channel_type: ChannelType::Telegram,
         account_id: "bot".into(),
         chat_id: "123".into(),
@@ -221,6 +281,7 @@ fn only_operator_direct_turns_are_trusted() {
 #[test]
 fn command_authorization_matches_privilege_and_conversation_scope() {
     let direct = ChannelReplyTarget {
+        direct_chat: false,
         channel_type: ChannelType::Telegram,
         account_id: "bot".into(),
         chat_id: "123".into(),
@@ -404,6 +465,7 @@ fn telegram_config_controls_shared_turn_tool_ceiling() {
             ("123", ChannelSenderRole::Guest),
         ] {
             let target = ChannelReplyTarget {
+                direct_chat: false,
                 channel_type: ChannelType::Telegram,
                 account_id: "bot".into(),
                 chat_id: chat_id.into(),

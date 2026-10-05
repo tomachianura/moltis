@@ -292,6 +292,7 @@ mod tests {
             sink: sink.clone(),
             action_id: "approve".to_string(),
             reply_to: ChannelReplyTarget {
+                direct_chat: false,
                 ack_message_id: None,
                 channel_type: ChannelType::Slack,
                 account_id: "default".to_string(),

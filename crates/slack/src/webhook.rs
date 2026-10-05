@@ -278,6 +278,7 @@ pub async fn handle_verified_interaction_webhook(
 
     if let Some(sink) = event_sink {
         let reply_to = ChannelReplyTarget {
+            direct_chat: false,
             ack_message_id: None,
             channel_type: ChannelType::Slack,
             account_id: account_id.to_string(),
@@ -350,6 +351,7 @@ pub async fn handle_verified_command_webhook(
 
     if let Some(sink) = event_sink {
         let reply_to = ChannelReplyTarget {
+            direct_chat: false,
             ack_message_id: None,
             channel_type: ChannelType::Slack,
             account_id: account_id.to_string(),

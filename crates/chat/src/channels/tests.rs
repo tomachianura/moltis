@@ -79,6 +79,7 @@ impl moltis_channels::ChannelOutbound for RecordingOutbound {
 
 fn telegram_target() -> ChannelReplyTarget {
     ChannelReplyTarget {
+        direct_chat: false,
         ack_message_id: None,
         channel_type: ChannelType::Telegram,
         account_id: "telegram-main".into(),
@@ -180,6 +181,7 @@ async fn generated_image_payload_dispatches_to_telegram_as_media() {
 async fn generated_image_payload_dispatches_to_matrix_as_media() {
     let outbound = Arc::new(RecordingOutbound::default());
     let targets = vec![ChannelReplyTarget {
+        direct_chat: false,
         ack_message_id: None,
         channel_type: ChannelType::Matrix,
         account_id: "matrix-main".into(),

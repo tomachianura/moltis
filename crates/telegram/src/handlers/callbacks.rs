@@ -389,6 +389,7 @@ pub(super) async fn handle_callback_query(
         .map(|tid| tid.0.0.to_string());
     let sender_id = query.from.id.0.to_string();
     let reply_target = ChannelReplyTarget {
+        direct_chat: false,
         ack_message_id: None,
         channel_type: ChannelType::Telegram,
         account_id: account_id.to_string(),

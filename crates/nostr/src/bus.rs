@@ -355,6 +355,7 @@ async fn handle_event(
 
     // 9. Intercept slash commands before dispatching to the LLM.
     let reply_to = moltis_channels::ChannelReplyTarget {
+        direct_chat: false,
         ack_message_id: None,
         channel_type: moltis_channels::ChannelType::Nostr,
         account_id: account_id.to_string(),
@@ -527,6 +528,7 @@ async fn handle_group_event(
     // Setting `ack_message_id` opts this message into the gateway's
     // acknowledgement reactions (👀 on receipt, ✅/❌ on completion).
     let reply_to = moltis_channels::ChannelReplyTarget {
+        direct_chat: false,
         ack_message_id: ack_reactions.then(|| event.id.to_hex()),
         channel_type: moltis_channels::ChannelType::Nostr,
         account_id: account_id.to_string(),

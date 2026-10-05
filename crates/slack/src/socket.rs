@@ -507,6 +507,7 @@ pub(crate) async fn handle_inbound(
     // Dispatch to chat.
     if let Some(sink) = &event_sink {
         let reply_to = ChannelReplyTarget {
+            direct_chat: false,
             ack_message_id,
             channel_type: ChannelType::Slack,
             account_id: account_id.to_string(),
@@ -698,6 +699,7 @@ pub(crate) async fn dispatch_reaction(
     // Thread the synthetic message under the reacted message so the agent sees
     // the original content as thread context (dispatch fetches thread history).
     let reply_to = ChannelReplyTarget {
+        direct_chat: false,
         channel_type: ChannelType::Slack,
         account_id: account_id.to_string(),
         chat_id: channel_id,

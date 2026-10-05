@@ -119,6 +119,7 @@ mod tests {
 
     fn telegram_topic_target() -> moltis_channels::ChannelReplyTarget {
         moltis_channels::ChannelReplyTarget {
+            direct_chat: false,
             ack_message_id: None,
             channel_type: moltis_channels::ChannelType::Telegram,
             account_id: "bot1".into(),

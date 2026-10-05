@@ -207,7 +207,7 @@ fn apply_untrusted_channel_context_with(
 /// Unknown chat kinds are treated as shared. Only channel types that can prove
 /// a one-to-one conversation may expose private prompt context.
 fn is_shared_channel_target(reply_to: &ChannelReplyTarget) -> bool {
-    reply_to.channel_type.is_shared_chat(&reply_to.chat_id)
+    reply_to.is_shared_chat()
 }
 
 fn is_trusted_channel_turn(role: ChannelSenderRole, reply_to: &ChannelReplyTarget) -> bool {

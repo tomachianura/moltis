@@ -1,8 +1,8 @@
 use {
     serenity::{
         all::{
-            Attachment, Context, CreateMessage, EventHandler, GatewayIntents, Interaction, Message,
-            MessageId, ReactionType, Ready,
+            Attachment, Context, CreateMessage, EventHandler, GatewayIntents, GuildId, Interaction,
+            Message, MessageId, ReactionType, Ready,
         },
         async_trait,
         gateway::ActivityData,
@@ -45,6 +45,34 @@ pub fn required_intents() -> GatewayIntents {
         | GatewayIntents::GUILDS
         | GatewayIntents::GUILD_MESSAGE_REACTIONS
         | GatewayIntents::DIRECT_MESSAGE_REACTIONS
+}
+
+/// Whether a gateway message arrived in the bot's own one-to-one DM.
+///
+/// Guild messages always carry a `guild_id`, and bot users cannot be members
+/// of group DMs, so a message without one is a direct conversation between
+/// its author and the bot.
+pub(crate) fn is_bot_direct_message(guild_id: Option<GuildId>) -> bool {
+    guild_id.is_none()
+}
+
+/// Reply target for an inbound gateway message, forwarding whether the
+/// conversation is a DM so the gateway can classify it as a direct chat.
+pub(crate) fn message_reply_target(
+    account_id: &str,
+    channel_id: serenity::all::ChannelId,
+    message_id: MessageId,
+    guild_id: Option<GuildId>,
+) -> ChannelReplyTarget {
+    ChannelReplyTarget {
+        direct_chat: is_bot_direct_message(guild_id),
+        ack_message_id: None,
+        channel_type: ChannelType::Discord,
+        account_id: account_id.to_string(),
+        chat_id: channel_id.to_string(),
+        message_id: Some(message_id.to_string()),
+        thread_id: None,
+    }
 }
 
 /// Serenity event handler for a Discord bot account.
@@ -907,14 +935,7 @@ impl EventHandler for Handler {
             }
         }
 
-        let reply_to = ChannelReplyTarget {
-            ack_message_id: None,
-            channel_type: ChannelType::Discord,
-            account_id: self.account_id.clone(),
-            chat_id: chat_id.clone(),
-            message_id: Some(msg.id.to_string()),
-            thread_id: None,
-        };
+        let reply_to = message_reply_target(&self.account_id, msg.channel_id, msg.id, msg.guild_id);
 
         let Some(sink) = event_sink else {
             warn!(

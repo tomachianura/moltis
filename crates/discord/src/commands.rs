@@ -9,12 +9,44 @@ use {
         Command, CommandDataOption, CommandDataOptionValue, CommandInteraction, CommandOptionType,
         ComponentInteraction, Context, CreateCommand, CreateCommandOption,
         CreateInteractionResponse, CreateInteractionResponseFollowup, EditInteractionResponse,
-        Interaction,
+        GuildId, Interaction, InteractionContext,
     },
     tracing::{debug, info, warn},
 };
 
 use crate::state::AccountStateMap;
+
+/// Whether an interaction was invoked in the bot's own one-to-one DM.
+///
+/// A missing `guild_id` is not enough on its own: a user-installed app can be
+/// invoked from the user's DMs and group DMs with other people
+/// (`PrivateChannel`). Only an explicit `BotDm` context proves the bot is the
+/// other party, and a missing context fails closed.
+pub(crate) fn is_bot_dm_interaction(
+    guild_id: Option<GuildId>,
+    context: Option<InteractionContext>,
+) -> bool {
+    guild_id.is_none() && context == Some(InteractionContext::BotDm)
+}
+
+/// Reply target for a slash-command or component interaction, forwarding
+/// whether it came from the bot's DM so the gateway can classify it as direct.
+pub(crate) fn interaction_reply_target(
+    account_id: &str,
+    channel_id: serenity::all::ChannelId,
+    guild_id: Option<GuildId>,
+    context: Option<InteractionContext>,
+) -> moltis_channels::plugin::ChannelReplyTarget {
+    moltis_channels::plugin::ChannelReplyTarget {
+        direct_chat: is_bot_dm_interaction(guild_id, context),
+        ack_message_id: None,
+        channel_type: moltis_channels::ChannelType::Discord,
+        account_id: account_id.to_string(),
+        chat_id: channel_id.to_string(),
+        message_id: None,
+        thread_id: None,
+    }
+}
 
 /// Build the set of global slash commands to register.
 ///
@@ -106,14 +138,12 @@ async fn handle_slash_command(
         return;
     };
 
-    let reply_to = moltis_channels::plugin::ChannelReplyTarget {
-        ack_message_id: None,
-        channel_type: moltis_channels::ChannelType::Discord,
-        account_id: account_id.to_string(),
-        chat_id: command.channel_id.to_string(),
-        message_id: None,
-        thread_id: None,
-    };
+    let reply_to = interaction_reply_target(
+        account_id,
+        command.channel_id,
+        command.guild_id,
+        command.context,
+    );
     let sender_id = command.user.id.to_string();
 
     let command_text = build_command_text(&command.data.name, &command.data.options);
@@ -166,14 +196,12 @@ async fn handle_component_interaction(
         return;
     };
 
-    let reply_to = moltis_channels::plugin::ChannelReplyTarget {
-        ack_message_id: None,
-        channel_type: moltis_channels::ChannelType::Discord,
-        account_id: account_id.to_string(),
-        chat_id: component.channel_id.to_string(),
-        message_id: None,
-        thread_id: None,
-    };
+    let reply_to = interaction_reply_target(
+        account_id,
+        component.channel_id,
+        component.guild_id,
+        component.context,
+    );
 
     let sender_id = component.user.id.to_string();
     match sink
@@ -240,6 +268,41 @@ async fn respond_ephemeral(ctx: &Context, command: &CommandInteraction, text: &s
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bot_dm_interaction_forwards_direct_chat() {
+        let target = interaction_reply_target(
+            "bot",
+            serenity::all::ChannelId::new(42),
+            None,
+            Some(InteractionContext::BotDm),
+        );
+        assert!(target.direct_chat);
+        assert_eq!(target.chat_id, "42");
+        assert!(!target.is_shared_chat());
+    }
+
+    #[test]
+    fn non_bot_dm_interactions_stay_shared() {
+        let channel = serenity::all::ChannelId::new(42);
+        let guild = Some(GuildId::new(9));
+        for (guild_id, context) in [
+            (guild, Some(InteractionContext::Guild)),
+            // A user-installed app invoked in a DM or group DM between people.
+            (None, Some(InteractionContext::PrivateChannel)),
+            // Older payloads without a context field.
+            (None, None),
+            // A guild id always means a guild, whatever the context claims.
+            (guild, Some(InteractionContext::BotDm)),
+        ] {
+            let target = interaction_reply_target("bot", channel, guild_id, context);
+            assert!(
+                !target.direct_chat,
+                "guild={guild_id:?} context={context:?} was forwarded as direct"
+            );
+            assert!(target.is_shared_chat());
+        }
+    }
 
     #[test]
     fn build_commands_matches_registry_count() {

@@ -1,6 +1,16 @@
 use crate::plugin::ChannelType;
 
 pub(crate) fn classify_chat(channel_type: ChannelType, chat_id: &str) -> Option<String> {
+    classify_chat_with_hint(channel_type, chat_id, false)
+}
+
+/// [`classify_chat`] plus the adapter's `direct_chat` evidence, which only
+/// channel types whose chat IDs do not encode conversation kind consult.
+pub(crate) fn classify_chat_with_hint(
+    channel_type: ChannelType,
+    chat_id: &str,
+    direct_chat: bool,
+) -> Option<String> {
     match channel_type {
         ChannelType::Telegram => {
             if chat_id.starts_with("-100") {
@@ -37,6 +47,7 @@ pub(crate) fn classify_chat(channel_type: ChannelType, chat_id: &str) -> Option<
         ),
         ChannelType::Nostr => Some("dm".to_string()),
         ChannelType::Telephony => Some("call".to_string()),
+        ChannelType::Discord if direct_chat => Some("direct".to_string()),
         ChannelType::MsTeams | ChannelType::Discord | ChannelType::Matrix => None,
     }
 }
@@ -61,6 +72,20 @@ const WHATSAPP_DIRECT_SUFFIXES: [&str; 2] = ["@s.whatsapp.net", "@lid"];
 /// its chat id is a caller number, and caller ID is trivially spoofable, so
 /// there is nothing here to authenticate against.
 pub(crate) fn is_shared_chat(channel_type: ChannelType, chat_id: &str) -> bool {
+    is_shared_chat_with_hint(channel_type, chat_id, false)
+}
+
+/// [`is_shared_chat`] plus the adapter's `direct_chat` evidence.
+///
+/// The hint is honoured only for channel types whose chat IDs cannot be
+/// classified on their own and whose adapter forwards the conversation kind.
+/// Everywhere else it is ignored, so the ID-based allowlist above stays the
+/// only way those channels reach "direct".
+pub(crate) fn is_shared_chat_with_hint(
+    channel_type: ChannelType,
+    chat_id: &str,
+    direct_chat: bool,
+) -> bool {
     match channel_type {
         // Negative ids are groups, supergroups, and channels; users are positive.
         ChannelType::Telegram => !chat_id.chars().all(|c| c.is_ascii_digit()) || chat_id.is_empty(),
@@ -75,12 +100,13 @@ pub(crate) fn is_shared_chat(channel_type: ChannelType, chat_id: &str) -> bool {
             .any(|suffix| chat_id.ends_with(suffix)),
         // Nostr DMs are addressed to a pubkey the sender must hold the key for.
         ChannelType::Nostr => false,
-        // Telephony: caller-ID only, see above. Discord/Teams/Matrix ids do not
-        // encode conversation kind and the adapters do not yet forward it.
-        ChannelType::Telephony
-        | ChannelType::MsTeams
-        | ChannelType::Discord
-        | ChannelType::Matrix => true,
+        // Discord channel ids do not encode conversation kind, so the adapter
+        // forwards it: a message without a `guild_id` (bots cannot join group
+        // DMs) or an interaction whose context is the bot's own DM.
+        ChannelType::Discord => !direct_chat,
+        // Telephony: caller-ID only, see above. Teams/Matrix ids do not encode
+        // conversation kind and the adapters do not yet forward it.
+        ChannelType::Telephony | ChannelType::MsTeams | ChannelType::Matrix => true,
     }
 }
 
@@ -137,6 +163,62 @@ mod tests {
         assert!(is_shared_chat(ChannelType::Whatsapp, "status@broadcast"));
         assert!(is_shared_chat(ChannelType::Whatsapp, "123@newsletter"));
         assert!(is_shared_chat(ChannelType::Whatsapp, "15551234567"));
+    }
+
+    /// Discord ids carry no conversation kind, so only the adapter's DM
+    /// evidence makes a Discord chat direct; guild channels stay shared.
+    #[test]
+    fn discord_dm_is_direct_only_with_adapter_evidence() {
+        assert!(!is_shared_chat_with_hint(ChannelType::Discord, "123", true));
+        assert!(is_shared_chat_with_hint(ChannelType::Discord, "123", false));
+        assert!(is_shared_chat(ChannelType::Discord, "123"));
+        assert_eq!(
+            classify_chat_with_hint(ChannelType::Discord, "123", true).as_deref(),
+            Some("direct")
+        );
+        assert!(classify_chat_with_hint(ChannelType::Discord, "123", false).is_none());
+    }
+
+    /// The hint must not widen channels that classify by id, or channels whose
+    /// adapters do not forward conversation kind.
+    #[test]
+    fn direct_hint_is_ignored_outside_discord() {
+        assert!(is_shared_chat_with_hint(
+            ChannelType::Telegram,
+            "-123",
+            true
+        ));
+        assert!(is_shared_chat_with_hint(ChannelType::Slack, "C123", true));
+        assert!(is_shared_chat_with_hint(
+            ChannelType::Signal,
+            "group:abc",
+            true
+        ));
+        assert!(is_shared_chat_with_hint(
+            ChannelType::Whatsapp,
+            "123@g.us",
+            true
+        ));
+        assert!(is_shared_chat_with_hint(
+            ChannelType::MsTeams,
+            "19:abc",
+            true
+        ));
+        assert!(is_shared_chat_with_hint(
+            ChannelType::Matrix,
+            "!room:example.org",
+            true
+        ));
+        assert!(is_shared_chat_with_hint(
+            ChannelType::Telephony,
+            "+15551234567",
+            true
+        ));
+        assert_eq!(
+            classify_chat_with_hint(ChannelType::Slack, "C123", true).as_deref(),
+            Some("channel")
+        );
+        assert!(classify_chat_with_hint(ChannelType::Matrix, "!room:example.org", true).is_none());
     }
 
     /// A phone number is a claim, not an authenticated identity: caller ID is

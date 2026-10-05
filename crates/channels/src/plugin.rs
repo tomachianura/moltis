@@ -378,9 +378,41 @@ pub struct ChannelReplyTarget {
     /// channel supports acknowledgment reactions; `None` disables ack reactions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ack_message_id: Option<String>,
+    /// The adapter saw platform evidence that this conversation is one-to-one
+    /// with the bot, for channels whose chat IDs do not encode conversation
+    /// kind (e.g. a Discord message without a `guild_id`).
+    ///
+    /// Only channel types that cannot classify a chat from its ID honour this
+    /// flag; for every other channel type it is ignored, so a stray `true`
+    /// can never turn a shared chat into a direct one. See
+    /// [`ChannelReplyTarget::is_shared_chat`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub direct_chat: bool,
 }
 
 impl ChannelReplyTarget {
+    /// Best-effort chat classification for hook and prompt context, using
+    /// the chat ID and any conversation kind forwarded by the adapter.
+    #[must_use]
+    pub fn classify_chat(&self) -> Option<String> {
+        crate::chat_classification::classify_chat_with_hint(
+            self.channel_type,
+            &self.chat_id,
+            self.direct_chat,
+        )
+    }
+
+    /// Whether this conversation can contain messages from principals other
+    /// than the sender. Unknown chat kinds fail closed as shared.
+    #[must_use]
+    pub fn is_shared_chat(&self) -> bool {
+        crate::chat_classification::is_shared_chat_with_hint(
+            self.channel_type,
+            &self.chat_id,
+            self.direct_chat,
+        )
+    }
+
     /// Deterministic session key used when a channel has no explicit active
     /// session override.
     pub fn default_session_key(&self) -> String {
@@ -416,7 +448,7 @@ impl From<&ChannelReplyTarget> for ChannelBinding {
             account_id: Some(target.account_id.clone()),
             chat_id: Some(target.chat_id.clone()),
             outbound_to: Some(target.outbound_to().into_owned()),
-            chat_type: target.channel_type.classify_chat(&target.chat_id),
+            chat_type: target.classify_chat(),
             sender_id: None,
         }
     }
@@ -1000,6 +1032,7 @@ mod tests {
     async fn default_update_location_returns_false() {
         let sink = DummySink;
         let target = ChannelReplyTarget {
+            direct_chat: false,
             ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
@@ -1017,6 +1050,7 @@ mod tests {
     #[test]
     fn outbound_to_without_thread_id() {
         let target = ChannelReplyTarget {
+            direct_chat: false,
             ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
@@ -1030,6 +1064,7 @@ mod tests {
     #[test]
     fn outbound_to_with_thread_id() {
         let target = ChannelReplyTarget {
+            direct_chat: false,
             ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
@@ -1043,6 +1078,7 @@ mod tests {
     #[test]
     fn reply_target_thread_id_serde_roundtrip() {
         let target = ChannelReplyTarget {
+            direct_chat: false,
             ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),
@@ -1062,6 +1098,33 @@ mod tests {
         let json = r#"{"channel_type":"telegram","account_id":"bot1","chat_id":"123"}"#;
         let target: ChannelReplyTarget = serde_json::from_str(json).unwrap();
         assert!(target.thread_id.is_none());
+    }
+
+    #[test]
+    fn reply_target_direct_chat_serde_is_backward_compatible() {
+        // Stored bindings written before the field existed stay shared.
+        let json = r#"{"channel_type":"discord","account_id":"bot1","chat_id":"123"}"#;
+        let legacy: ChannelReplyTarget = serde_json::from_str(json).unwrap();
+        assert!(!legacy.direct_chat);
+        assert!(legacy.is_shared_chat());
+        assert!(
+            !serde_json::to_string(&legacy)
+                .unwrap()
+                .contains("direct_chat")
+        );
+
+        let dm = ChannelReplyTarget {
+            direct_chat: true,
+            ..legacy
+        };
+        let restored: ChannelReplyTarget =
+            serde_json::from_str(&serde_json::to_string(&dm).unwrap()).unwrap();
+        assert!(restored.direct_chat);
+        assert!(!restored.is_shared_chat());
+        assert_eq!(
+            ChannelBinding::from(&restored).chat_type.as_deref(),
+            Some("direct")
+        );
     }
 
     #[test]
@@ -1345,6 +1408,7 @@ mod tests {
     #[test]
     fn channel_reply_target_converts_to_hook_channel_binding() {
         let target = ChannelReplyTarget {
+            direct_chat: false,
             ack_message_id: None,
             channel_type: ChannelType::Telegram,
             account_id: "bot1".into(),

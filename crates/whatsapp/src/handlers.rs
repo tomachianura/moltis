@@ -406,6 +406,7 @@ async fn handle_message(
     // Check for slash commands.
     if let Some(cmd) = text.strip_prefix('/') {
         let reply_to = ChannelReplyTarget {
+            direct_chat: false,
             ack_message_id: None,
             channel_type: ChannelType::Whatsapp,
             account_id: state.account_id.clone(),
@@ -438,6 +439,7 @@ async fn handle_message(
 
     let account_id = &state.account_id;
     let reply_to = ChannelReplyTarget {
+        direct_chat: false,
         ack_message_id: None,
         channel_type: ChannelType::Whatsapp,
         account_id: state.account_id.clone(),

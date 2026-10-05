@@ -408,6 +408,7 @@ mod tests {
 
         let sink = Arc::new(CapturingSink(std::sync::Mutex::new(None)));
         let reply_to = ChannelReplyTarget {
+            direct_chat: false,
             channel_type: moltis_channels::ChannelType::Whatsapp,
             account_id: "test".to_string(),
             chat_id: "test-chat".to_string(),

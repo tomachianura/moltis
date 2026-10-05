@@ -185,8 +185,8 @@ move privileged work to an operator DM or the authenticated web UI. Adapters
 that cannot prove a chat is direct treat it as shared.
 ```
 
-Discord, Microsoft Teams, and Matrix currently fall into that conservative
-category even for actual DMs. Their normal chat remains available, but tools,
+Microsoft Teams and Matrix currently fall into that conservative category
+even for actual DMs. Their normal chat remains available, but tools,
 private context, `/sh`, location updates, and privileged commands are denied.
 
 Telephony is in that category permanently: a call's only identifier is the

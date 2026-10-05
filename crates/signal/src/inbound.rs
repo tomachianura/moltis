@@ -118,6 +118,7 @@ pub async fn handle_event(
     }
 
     let reply_to = ChannelReplyTarget {
+        direct_chat: false,
         ack_message_id: None,
         channel_type: ChannelType::Signal,
         account_id: account_id.to_string(),

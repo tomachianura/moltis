@@ -622,6 +622,7 @@ fn cron_delivery_target(
     };
 
     Some(moltis_channels::ChannelReplyTarget {
+        direct_chat: false,
         channel_type,
         account_id: account_id.to_string(),
         chat_id,

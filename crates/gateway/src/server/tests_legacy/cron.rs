@@ -76,6 +76,7 @@ fn reply_target(
     thread_id: Option<&str>,
 ) -> ChannelReplyTarget {
     ChannelReplyTarget {
+        direct_chat: false,
         channel_type,
         account_id: account_id.to_string(),
         chat_id: chat_id.to_string(),

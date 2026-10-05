@@ -287,11 +287,16 @@ turns may use the full configured tool set. Unknown chat kinds fail closed as
 shared.
 
 ```admonish note title="Conservative DM detection"
-Discord, Microsoft Teams, and Matrix chat IDs do not encode whether the
-conversation is direct, and that topology is not yet carried into the gateway.
-Those integrations currently fail closed as shared even for actual DMs, so use
-the authenticated web UI or a supported proven-direct channel for privileged
-work. Normal tool-free chat still works.
+Microsoft Teams and Matrix chat IDs do not encode whether the conversation is
+direct, and that topology is not yet carried into the gateway. Those
+integrations currently fail closed as shared even for actual DMs, so use the
+authenticated web UI or a supported proven-direct channel for privileged work.
+Normal tool-free chat still works.
+
+Discord chat IDs do not encode it either, so the Discord adapter forwards it: a
+message without a guild (bots cannot join group DMs), or an interaction whose
+context is the bot's own DM, is direct. Every guild channel and thread, and any
+interaction outside the bot's DM, stays shared.
 
 Phone calls are also treated as shared, for a different reason: the only
 identifier a call carries is the caller number, and caller ID is trivially
@@ -300,7 +305,8 @@ telephony never grants privileged access no matter what `operators` contains.
 
 Chat kinds are matched as an **allowlist of shapes known to be one-to-one**
 (Telegram positive chat IDs, Slack `D…` conversations, WhatsApp
-`@s.whatsapp.net` and `@lid` JIDs, Signal non-`group:` identifiers, Nostr DMs).
+`@s.whatsapp.net` and `@lid` JIDs, Signal non-`group:` identifiers, Nostr DMs,
+and Discord DMs as reported by the adapter).
 An ID whose form is not recognised is shared.
 ```
 

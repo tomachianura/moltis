@@ -510,6 +510,7 @@ mod tests {
 
     fn reply_target() -> ChannelReplyTarget {
         ChannelReplyTarget {
+            direct_chat: false,
             ack_message_id: None,
             channel_type: ChannelType::Discord,
             account_id: "acct".into(),

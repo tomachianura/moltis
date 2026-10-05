@@ -82,7 +82,7 @@ offered = ["telegram", "discord"]
 | `mention_mode` | no | `"mention"` | When the bot responds in guilds: `"always"`, `"mention"` (only when @mentioned), or `"none"` |
 | `allowlist` | no | `[]` | Discord usernames allowed to DM the bot (when `dm_policy = "allowlist"`) |
 | `guild_allowlist` | no | `[]` | Guild (server) IDs allowed to interact with the bot |
-| `operators` | no | `[]` | Exact sender IDs eligible for privileged channel commands. Empty means nobody. Discord currently fails closed as shared even in DMs; see [Operators](./channels.md#operators-privileged-senders) |
+| `operators` | no | `[]` | Exact sender IDs eligible for privileged channel commands. Empty means nobody. Operator privileges apply only in DMs with the bot; guild channels are always shared. See [Operators](./channels.md#operators-privileged-senders) |
 | `model` | no | — | Override the default model for this channel |
 | `model_provider` | no | — | Provider for the overridden model |
 | `agent_id` | no | — | Default agent ID for this Discord bot |
@@ -107,7 +107,7 @@ group_policy = "open"
 mention_mode = "mention"
 allowlist = ["111111111111111111", "222222222222222222"]
 guild_allowlist = ["123456789012345678"]
-# Records operator identity for future proven-direct topology support.
+# Operators get privileged commands and tools in their DMs with the bot.
 operators = ["111111111111111111"]
 reply_to_message = true
 ack_reaction = "👀"
@@ -217,9 +217,10 @@ the bot is present). Responses are ephemeral — only visible to the user who
 invoked the command.
 
 Commands that require an operator direct chat, including `/context`,
-`/sessions`, and `/agent`, currently fail closed on Discord because the gateway
-cannot yet prove Discord conversation topology from its channel ID. Use the
-authenticated web UI for those commands.
+`/sessions`, and `/agent`, work for operators in a DM with the bot. In guild
+channels they are denied, and so are slash commands invoked through a
+user-installed app outside the bot's own DM. Use the authenticated web UI for
+those commands from a guild.
 
 ```admonish note
 Text-based `/` commands (e.g. typing `/model` as a regular message) continue to
@@ -279,9 +280,12 @@ username is listed in the `allowlist` array — otherwise the bot will ignore yo
 DMs. Set `dm_policy = "open"` to allow anyone to DM the bot.
 ```
 
-Discord DMs currently support normal tool-free chat only. Privileged commands,
-agent tools, private owner context, and `/sh` fail closed until direct-chat
-topology is carried into the gateway.
+A DM with the bot is a direct chat: the adapter forwards that the message has
+no guild, and the gateway classifies the conversation as one-to-one. For a
+sender listed in `operators`, normal turns get the configured tool set and
+private owner context, and privileged commands and `/sh` are available. Other DM
+senders are guests and keep tool-free chat, as on other channels. Guild
+channels and threads stay shared for everyone.
 
 ### Without a Shared Server
 
